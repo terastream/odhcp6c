@@ -52,6 +52,8 @@ static int urandom_fd = -1, allow_slaac_only = 0;
 static bool bound = false, release = true;
 static time_t last_update = 0;
 
+static unsigned int min_update_interval = DEFAULT_MIN_UPDATE_INTERVAL;
+
 int main(_unused int argc, char* const argv[])
 {
 	// Allocate ressources
@@ -77,7 +79,7 @@ int main(_unused int argc, char* const argv[])
 	int c;
 	unsigned int client_options = DHCPV6_CLIENT_FQDN | DHCPV6_ACCEPT_RECONFIGURE;
 
-	while ((c = getopt(argc, argv, "S::N:V:P:FB:c:i:r:Ru:s:kt:hedp:fa")) != -1) {
+	while ((c = getopt(argc, argv, "S::N:V:P:FB:c:i:r:Ru:s:kt:m:hedp:fa")) != -1) {
 		switch (c) {
 		case 'S':
 			allow_slaac_only = (optarg) ? atoi(optarg) : -1;
@@ -197,6 +199,10 @@ int main(_unused int argc, char* const argv[])
 			sol_timeout = atoi(optarg);
 			break;
 
+		case 'm':
+			min_update_interval = atoi(optarg);
+			break;
+
 		case 'e':
 			logopt |= LOG_PERROR;
 			break;
@@ -259,7 +265,7 @@ int main(_unused int argc, char* const argv[])
 			pidfile = pidbuf;
 		}
 
-		int fd = open(pidfile, O_WRONLY | O_CREAT);
+		int fd = open(pidfile, O_WRONLY | O_CREAT, 0644);
 		if (fd >= 0) {
 			char buf[8];
 			int len = snprintf(buf, sizeof(buf), "%i\n", getpid());
@@ -366,16 +372,7 @@ int main(_unused int argc, char* const argv[])
 					break; // Other signal type
 
 				// Send renew as T1 expired
-				size_t ia_pd_len, ia_na_len;
-				odhcp6c_get_state(STATE_IA_PD, &ia_pd_len);
-				odhcp6c_get_state(STATE_IA_NA, &ia_na_len);
-
-				// If we have any IAs, send renew, otherwise request
-				if (ia_pd_len == 0 && ia_na_len == 0)
-					res = dhcpv6_request(DHCPV6_MSG_REQUEST);
-				else
-					res = dhcpv6_request(DHCPV6_MSG_RENEW);
-
+				res = dhcpv6_request(DHCPV6_MSG_RENEW);
 				odhcp6c_signal_process();
 				if (res > 0) { // Renew was succesfull
 					// Publish updates
@@ -384,6 +381,13 @@ int main(_unused int argc, char* const argv[])
 				}
 
 				odhcp6c_clear_state(STATE_SERVER_ID); // Remove binding
+
+				size_t ia_pd_len, ia_na_len;
+				odhcp6c_get_state(STATE_IA_PD, &ia_pd_len);
+				odhcp6c_get_state(STATE_IA_NA, &ia_na_len);
+
+				if (ia_pd_len == 0 && ia_na_len == 0)
+					break;
 
 				// If we have IAs, try rebind otherwise restart
 				res = dhcpv6_request(DHCPV6_MSG_REBIND);
@@ -438,6 +442,7 @@ static int usage(void)
 #ifdef EXT_BFD_PING
 	"	-B <interval>	Enable BFD ping check\n"
 #endif
+	"	-u <user-class> Set user-class option string\n"
 	"	-c <clientid>	Override client-ID (base-16 encoded)\n"
 	"	-i <iface-id>	Use a custom interface identifier for RA handling\n"
 	"	-r <options>	Options to be requested (comma-separated)\n"
@@ -447,6 +452,7 @@ static int usage(void)
 	"	-f		Don't send Client FQDN option\n"
 	"	-k		Don't send a RELEASE when stopping\n"
 	"	-t <seconds>	Maximum timeout for DHCPv6-SOLICIT (3600)\n"
+	"	-m <seconds>	Minimum time between accepting updates (30)\n"
 	"\nInvocation options:\n"
 	"	-p <pidfile>	Set pidfile (/var/run/odhcp6c.pid)\n"
 	"	-d		Daemonize\n"
@@ -463,7 +469,7 @@ uint64_t odhcp6c_get_milli_time(void)
 {
 	struct timespec t = {0, 0};
 	syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &t);
-	return t.tv_sec * 1000 + t.tv_nsec / 1000000;
+	return ((uint64_t)t.tv_sec) * 1000 + ((uint64_t)t.tv_nsec) / 1000000;
 }
 
 
@@ -593,10 +599,10 @@ bool odhcp6c_update_entry_safe(enum odhcp6c_state state, struct odhcp6c_entry *n
 	if (new->valid > 0) {
 		if (x) {
 			if (new->valid >= x->valid && new->valid != UINT32_MAX &&
-					new->valid - x->valid < 60 &&
+					new->valid - x->valid < min_update_interval &&
 					new->preferred >= x->preferred &&
 					new->preferred != UINT32_MAX &&
-					new->preferred - x->preferred < 60 &&
+					new->preferred - x->preferred < min_update_interval &&
 					x->class == new->class)
 				return false;
 			x->valid = new->valid;

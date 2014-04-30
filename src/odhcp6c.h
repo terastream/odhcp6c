@@ -31,6 +31,8 @@
 #define DHCPV6_REB_MAX_RT 600
 #define DHCPV6_INF_MAX_RT 3600
 
+#define DEFAULT_MIN_UPDATE_INTERVAL 30
+
 enum dhcvp6_opt {
 	DHCPV6_OPT_CLIENTID = 1,
 	DHCPV6_OPT_SERVERID = 2,
@@ -65,6 +67,21 @@ enum dhcvp6_opt {
 #ifdef EXT_PREFIX_CLASS
 	/* draft-bhandari-dhc-class-based-prefix, not yet standardized */
 	DHCPV6_OPT_PREFIX_CLASS = EXT_PREFIX_CLASS,
+#endif
+#ifdef EXT_CER_ID
+	/* draft-donley-dhc-cer-id-option-03 */
+	DHCPV6_OPT_CER_ID = EXT_CER_ID,
+#endif
+#ifdef EXT_S46
+	/* draft-ietf-softwire-map-dhcp-07 */
+	DHCPV6_OPT_S46_RULE = EXT_S46,
+	DHCPV6_OPT_S46_BR = EXT_S46 + 1,
+	DHCPV6_OPT_S46_DMR = EXT_S46 + 2,
+	DHCPV6_OPT_S46_V4V6BIND = EXT_S46 + 3,
+	DHCPV6_OPT_S46_PORTPARAMS = EXT_S46 + 4,
+	DHCPV6_OPT_S46_CONT_MAPE = EXT_S46 + 5,
+	DHCPV6_OPT_S46_CONT_MAPT = EXT_S46 + 6,
+	DHCPV6_OPT_S46_CONT_LW = EXT_S46 + 7,
 #endif
 };
 
@@ -169,6 +186,40 @@ struct dhcpv6_auth_reconfigure {
 	uint8_t key[16];
 } _packed;
 
+struct dhcpv6_cer_id {
+	uint16_t type;
+	uint16_t len;
+	uint16_t reserved;
+	uint16_t auth_type;
+	uint8_t auth[16];
+	struct in6_addr addr;
+} _packed;
+
+struct dhcpv6_s46_portparams {
+	uint8_t offset;
+	uint8_t psid_len;
+	uint16_t psid;
+} _packed;
+
+struct dhcpv6_s46_v4v6bind {
+	struct in_addr ipv4_address;
+	uint8_t bindprefix6_len;
+	uint8_t bind_ipv6_prefix[];
+} _packed;
+
+struct dhcpv6_s46_dmr {
+	uint8_t dmr_prefix6_len;
+	uint8_t dmr_ipv6_prefix[];
+} _packed;
+
+struct dhcpv6_s46_rule {
+	uint8_t flags;
+	uint8_t ea_len;
+	uint8_t prefix4_len;
+	struct in_addr ipv4_prefix;
+	uint8_t prefix6_len;
+	uint8_t ipv6_prefix[];
+} _packed;
 
 #define dhcpv6_for_each_option(start, end, otype, olen, odata)\
 	for (uint8_t *_o = (uint8_t*)(start); _o + 4 <= (uint8_t*)(end) &&\
@@ -215,6 +266,10 @@ enum odhcp6c_state {
 	STATE_VENDORCLASS,
 	STATE_USERCLASS,
     STATE_DHCP4O6_SERVERS,
+	STATE_CER,
+	STATE_S46_MAPT,
+	STATE_S46_MAPE,
+	STATE_S46_LW,
 	_STATE_MAX
 };
 
